@@ -3,9 +3,9 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "owlbeam"
+name = "zapfault"
 dynamic = ["version"]
-description = "Error tracking for Python apps, sent to Owlbeam"
+description = "Error tracking for Python apps, sent to Zapfault"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
@@ -17,4 +17,4 @@ classifiers = [
 ]
 
 [tool.hatch.version]
-path = "src/owlbeam/_version.py"
+path = "src/zapfault/_version.py"

@@ -1,4 +1,4 @@
-"""The settings init resolves: an argument wins, then an OWLBEAM_* environment
+"""The settings init resolves: an argument wins, then an ZAPFAULT_* environment
 variable, then the default."""
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ def git_release() -> str | None:
 def _get(args: dict[str, Any], name: str, convert: Callable[[Any], Any], default: Any = None, env: bool = True) -> Any:
     value = args.pop(name, None)
     if value is None and env:
-        value = os.environ.get("OWLBEAM_" + name.upper()) or None
+        value = os.environ.get("ZAPFAULT_" + name.upper()) or None
     if value is None:
         return default
     try:

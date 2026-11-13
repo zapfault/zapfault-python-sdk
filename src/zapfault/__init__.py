@@ -1,4 +1,4 @@
-"""Owlbeam error tracking. Call owlbeam.init(dsn=...) once when the app starts."""
+"""Zapfault error tracking. Call zapfault.init(dsn=...) once when the app starts."""
 
 from ._api import capture_exception, capture_message, close, flush, init, is_enabled
 from ._version import __version__

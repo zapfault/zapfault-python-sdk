@@ -1,21 +1,21 @@
-# owlbeam
+# zapfault
 
-Error tracking for Python apps. Sends events to [Owlbeam](https://owlbeam.dev).
+Error tracking for Python apps. Sends events to [Zapfault](https://zapfault.com).
 Python 3.9+, no dependencies.
 
 ```sh
-pip install owlbeam
+pip install zapfault
 ```
 
 ## Usage
 
 Call `init` once, as early as possible when your app starts. The DSN is on your
-project's setup page in Owlbeam.
+project's setup page in Zapfault.
 
 ```python
-import owlbeam
+import zapfault
 
-owlbeam.init(dsn="https://<public_key>@ingest.owlbeam.dev/<project_id>")
+zapfault.init(dsn="https://<public_key>@ingest.zapfault.com/<project_id>")
 ```
 
 From then on, an exception nobody catches is reported, in the main thread or
@@ -27,9 +27,9 @@ To report an error you handle yourself, or just a message:
 try:
     charge(order)
 except PaymentError:
-    owlbeam.capture_exception()
+    zapfault.capture_exception()
 
-owlbeam.capture_message("Payment provider is slow", level="warning")
+zapfault.capture_message("Payment provider is slow", level="warning")
 ```
 
 Each error comes with its stack trace: the source lines around each call and
@@ -52,14 +52,14 @@ over the environment variable.
 
 | Option | Environment variable | Default |
 |---|---|---|
-| `dsn` | `OWLBEAM_DSN` | none: the SDK is off |
-| `enabled` | `OWLBEAM_ENABLED` | `True` |
-| `environment` | `OWLBEAM_ENVIRONMENT`, then `APP_ENV`, `ENVIRONMENT` | `"production"` |
-| `release` | `OWLBEAM_RELEASE`, then your host's commit variable (`GITHUB_SHA`, `VERCEL_GIT_COMMIT_SHA`, …), then `git rev-parse HEAD` | none |
-| `service` | `OWLBEAM_SERVICE` | none |
-| `debug` | `OWLBEAM_DEBUG` | `False`: prints what the SDK does |
-| `sample_rate` | `OWLBEAM_SAMPLE_RATE` | `1.0`: the share of events sent |
-| `transport` | `OWLBEAM_TRANSPORT` | `"http"`; `"console"` prints events instead of sending them |
+| `dsn` | `ZAPFAULT_DSN` | none: the SDK is off |
+| `enabled` | `ZAPFAULT_ENABLED` | `True` |
+| `environment` | `ZAPFAULT_ENVIRONMENT`, then `APP_ENV`, `ENVIRONMENT` | `"production"` |
+| `release` | `ZAPFAULT_RELEASE`, then your host's commit variable (`GITHUB_SHA`, `VERCEL_GIT_COMMIT_SHA`, …), then `git rev-parse HEAD` | none |
+| `service` | `ZAPFAULT_SERVICE` | none |
+| `debug` | `ZAPFAULT_DEBUG` | `False`: prints what the SDK does |
+| `sample_rate` | `ZAPFAULT_SAMPLE_RATE` | `1.0`: the share of events sent |
+| `transport` | `ZAPFAULT_TRANSPORT` | `"http"`; `"console"` prints events instead of sending them |
 | `max_queue_size` | | `100`: events waiting to be sent; more are dropped |
 | `shutdown_timeout` | | `2.0` seconds |
 | `include_local_variables` | | `True`: send your own frames' local variables |

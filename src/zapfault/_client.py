@@ -29,7 +29,7 @@ class Client:
             self.transport = HttpTransport(dsn, options.max_queue_size)
         self._head = {
             "protocol": 1,
-            "sdk": {"name": "owlbeam.python", "version": __version__},
+            "sdk": {"name": "zapfault.python", "version": __version__},
             "resource": _resource(options),
         }
 
@@ -48,11 +48,11 @@ class Client:
     def capture_exception(self, error: BaseException, mechanism: str, handled: bool) -> str | None:
         # The same exception object is sent once: capture_exception() then
         # `raise` would otherwise be reported again by the excepthook.
-        if getattr(error, "__owlbeam_captured__", False):
+        if getattr(error, "__zapfault_captured__", False):
             debug("exception already captured")
             return None
         try:
-            setattr(error, "__owlbeam_captured__", True)
+            setattr(error, "__zapfault_captured__", True)
         except Exception:
             pass
         if not self._sampled():

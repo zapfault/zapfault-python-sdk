@@ -17,7 +17,7 @@ from ._debug import debug, warn_once
 from ._dsn import Dsn
 from ._version import __version__
 
-USER_AGENT = f"owlbeam.python/{__version__}"
+USER_AGENT = f"zapfault.python/{__version__}"
 ATTEMPTS = 3
 DEFAULT_PAUSE = 60.0
 
@@ -52,7 +52,7 @@ class HttpTransport:
             self._reset()
         with self._lock:
             if self._thread is None:
-                self._thread = threading.Thread(target=self._run, name="owlbeam-transport", daemon=True)
+                self._thread = threading.Thread(target=self._run, name="zapfault-transport", daemon=True)
                 self._thread.start()
         try:
             self._queue.put_nowait(envelope)
@@ -129,7 +129,7 @@ class HttpTransport:
         body = json.dumps(envelope, separators=(",", ":"), default=str).encode()
         headers = {
             "Content-Type": "application/json",
-            "X-Owlbeam-Key": self._dsn.public_key,
+            "X-Zapfault-Key": self._dsn.public_key,
             "User-Agent": USER_AGENT,
         }
         if len(body) > 1024:

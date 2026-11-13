@@ -1,4 +1,4 @@
-"""The SDK's own messages, printed to stderr as "[owlbeam] ..."."""
+"""The SDK's own messages, printed to stderr as "[zapfault] ..."."""
 
 import sys
 
@@ -21,6 +21,6 @@ def warn_once(message: str) -> None:
 
 def _print(message: str) -> None:
     try:
-        print("[owlbeam] " + message, file=sys.stderr)
+        print("[zapfault] " + message, file=sys.stderr)
     except Exception:
         pass
