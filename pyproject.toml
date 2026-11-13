@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "owlbeam"
+dynamic = ["version"]
+description = "Error tracking for Python apps, sent to Owlbeam"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+dependencies = []
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Typing :: Typed",
+]
+
+[tool.hatch.version]
+path = "src/owlbeam/_version.py"
