@@ -5,14 +5,17 @@ every function does nothing."""
 from __future__ import annotations
 
 import atexit
+import logging
 import sys
 import threading
-from typing import Any
+from contextlib import contextmanager
+from typing import Any, Iterator
 
-from . import _debug, _hooks
+from . import _debug, _hooks, _logging, _scope
 from ._client import Client
 from ._dsn import parse_dsn
 from ._options import Options
+from ._scope import Scope
 
 _client: Client | None = None
 _lock = threading.Lock()
@@ -28,9 +31,12 @@ def init(dsn: str | None = None, **options: Any) -> None:
             if old is not None:
                 old.transport.close(old.options.shutdown_timeout)
             _client = _create(Options({"dsn": dsn, **options}))
+            if _client is not None:
+                _scope.reset(_client.options.tags, _client.options.max_breadcrumbs)
             if _client is not None and not _installed:
                 atexit.register(_at_exit)
                 _hooks.install(_capture_unhandled)
+                _logging.install(_log_breadcrumb)
                 _installed = True
     except Exception as e:
         _debug.debug(f"init failed: {e!r}")
@@ -64,6 +70,50 @@ def capture_exception(error: BaseException | None = None) -> str | None:
     except Exception as e:
         _debug.debug(f"capture_exception failed: {e!r}")
         return None
+
+
+def set_user(user: dict[str, Any] | None) -> None:
+    """Who was affected: {"id": ..., "email": ..., "username": ...}; None clears it."""
+    _on_scope("set_user", user)
+
+
+def set_tag(key: str, value: Any) -> None:
+    """A searchable key and value, like ("plan", "pro"); None removes the tag."""
+    _on_scope("set_tag", key, value)
+
+
+def set_tags(tags: dict[str, Any]) -> None:
+    _on_scope("set_tags", tags)
+
+
+def set_context(name: str, value: dict[str, Any] | None) -> None:
+    """Structured data shown on the event, like ("cart", {"items": 3}); None removes it."""
+    _on_scope("set_context", name, value)
+
+
+def add_breadcrumb(
+    message: str | None = None,
+    category: str | None = None,
+    level: str = "info",
+    data: dict[str, Any] | None = None,
+    type: str = "default",
+) -> None:
+    """Something that happened; the latest ones are sent with the next error."""
+    _on_scope("add_breadcrumb", message, category, level, data, type)
+
+
+@contextmanager
+def scope() -> Iterator[Scope]:
+    """Data set inside the block stays inside it:
+
+        with zapfault.scope() as scope:
+            scope.set_tag("job", "nightly-sync")
+    """
+    if _client is None:
+        yield Scope()
+        return
+    with _scope.fork() as active:
+        yield active
 
 
 def flush(timeout: float = 2.0) -> bool:
@@ -123,6 +173,28 @@ def _capture_unhandled(error: BaseException, mechanism: str) -> None:
         client.capture_exception(error, mechanism, handled=False)
     except Exception as e:
         _debug.debug(f"capturing an uncaught exception failed: {e!r}")
+
+
+def _on_scope(method: str, *args: Any) -> None:
+    """Calls a setter on the active scope; does nothing while the SDK is off."""
+    if _client is None:
+        return
+    try:
+        getattr(_scope.current(), method)(*args)
+    except Exception as e:
+        _debug.debug(f"{method} failed: {e!r}")
+
+
+def _log_breadcrumb(record: logging.LogRecord) -> None:
+    client = _client
+    if client is None or not client.options.logging_breadcrumbs or record.levelno < logging.INFO:
+        return
+    try:
+        _scope.current().add_breadcrumb(
+            message=record.getMessage(), category=record.name, level=_logging.level(record.levelno), type="log"
+        )
+    except Exception as e:
+        _debug.debug(f"logging breadcrumb failed: {e!r}")
 
 
 def _at_exit() -> None:

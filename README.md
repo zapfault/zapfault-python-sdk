@@ -45,6 +45,46 @@ The SDK never raises and never stops your app. With no DSN or `enabled=False`
 it does nothing, and with an invalid DSN it prints one warning and does
 nothing.
 
+## Adding context
+
+Tell Zapfault who was affected and what was going on. Whatever you set is sent
+with every error that follows:
+
+```python
+zapfault.set_user({"id": "4821", "email": "asha@example.com"})   # None clears it
+zapfault.set_tag("plan", "pro")                                   # searchable; None removes it
+zapfault.set_tags({"tenant": "acme", "feature": "checkout"})
+zapfault.set_context("cart", {"items": 3, "total": 49.99})        # shown on the event, not searchable
+zapfault.add_breadcrumb(message="applied coupon", category="cart", data={"code": "SAVE10"})
+```
+
+Set the values where your code knows them, so they can differ per user or per
+request. Tags that are the same for the whole process go in `init`:
+`zapfault.init(tags={"region": "eu"})`.
+
+Tag keys are 1 to 32 letters, digits, `_`, `.`, `:` or `-`; values are cut at
+200 characters, and at most 50 tags are kept.
+
+**Breadcrumbs** are the steps that led up to an error: the last 100 are sent
+with it. Besides your own, every log record at `INFO` or above becomes one, as
+far as your logging level lets it through (the default level is `WARNING`).
+
+**Data for one block only:** inside `zapfault.scope()`, changes stay in the
+block. An error raised in the block keeps its data even when it is caught (or
+crashes the program) after the block.
+
+```python
+with zapfault.scope() as scope:
+    scope.set_tag("job", "nightly-sync")
+    run_sync()
+```
+
+Each thread and each asyncio task sees its own data inside a `scope()` block,
+so concurrent work never mixes. In a web app, every request needs its own
+block: the framework integrations (coming soon) open one per request for you.
+Until then, data you set during a request without a `scope()` block stays for
+the requests that follow.
+
 ## Options
 
 Each option can be passed to `init` or set in the environment. An argument wins
@@ -65,6 +105,9 @@ over the environment variable.
 | `include_local_variables` | | `True`: send your own frames' local variables |
 | `in_app_include` | | Module prefixes that count as your code, such as a library you wrote |
 | `in_app_exclude` | | Module prefixes that don't count as your code |
+| `tags` | | Tags sent with every event, like `{"region": "eu"}` |
+| `max_breadcrumbs` | | `100`: breadcrumbs kept for the next error (0 to 100) |
+| `logging_breadcrumbs` | | `True`: log records at `INFO` and above become breadcrumbs |
 
 ## Functions
 
@@ -76,3 +119,8 @@ over the environment variable.
 | `flush(timeout=2.0)` | Waits until everything captured so far is sent. Use it before a short script or a serverless function ends. |
 | `close(timeout=2.0)` | Flushes, then turns the SDK off. |
 | `is_enabled()` | Whether the SDK is on. |
+| `set_user(user)` | Who was affected: `id`, `email`, `username`, `ip_address`; other keys are kept as attributes. `None` clears it. |
+| `set_tag(key, value)`, `set_tags(tags)` | Searchable key and value pairs. `None` removes a tag. |
+| `set_context(name, value)` | A dict shown on the event. `None` removes it. |
+| `add_breadcrumb(message=None, category=None, level="info", data=None, type="default")` | Records a step that led up to an error. |
+| `scope()` | A `with` block whose changes stay inside it. The scope it gives has the same `set_*` and `add_breadcrumb` methods. |

@@ -13,6 +13,7 @@ from ._debug import debug
 from ._dsn import Dsn
 from ._event import exception_values, truncate
 from ._options import Options, git_release
+from ._scope import Scope, current, for_error
 from ._transport import ConsoleTransport, HttpTransport, utc_now
 from ._version import __version__
 
@@ -43,7 +44,7 @@ class Client:
         item["message"] = truncate(message, MAX_MESSAGE)
         if len(message) > MAX_MESSAGE:
             item["_meta"] = {"message": {"truncated_from": len(message)}}
-        return self._send(item)
+        return self._send(item, current())
 
     def capture_exception(self, error: BaseException, mechanism: str, handled: bool) -> str | None:
         # The same exception object is sent once: capture_exception() then
@@ -61,7 +62,7 @@ class Client:
         values[-1]["mechanism"] = {"type": mechanism, "handled": handled}
         item = _item("error")
         item["exception"] = {"values": values}
-        return self._send(item)
+        return self._send(item, for_error(error))
 
     def _sampled(self) -> bool:
         if random.random() < self.options.sample_rate:
@@ -69,7 +70,8 @@ class Client:
         debug("event dropped by sample_rate")
         return False
 
-    def _send(self, item: dict) -> str:
+    def _send(self, item: dict, scope: Scope) -> str:
+        scope.apply(item)
         self.transport.send({**self._head, "items": [item]})
         return item["event_id"]
 

@@ -35,6 +35,9 @@ class Options:
         self.include_local_variables = _get(args, "include_local_variables", _bool, True, env=False)
         self.in_app_include = _get(args, "in_app_include", _names, (), env=False)
         self.in_app_exclude = _get(args, "in_app_exclude", _names, (), env=False)
+        self.tags = _get(args, "tags", dict, {}, env=False)
+        self.max_breadcrumbs = _get(args, "max_breadcrumbs", _breadcrumbs, 100, env=False)
+        self.logging_breadcrumbs = _get(args, "logging_breadcrumbs", _bool, True, env=False)
         for name in args:
             warn_once(f"unknown option {name!r} ignored")
 
@@ -102,6 +105,13 @@ def _seconds(value: Any) -> float:
     if seconds < 0:
         raise ValueError
     return seconds
+
+
+def _breadcrumbs(value: Any) -> int:
+    count = int(value)
+    if not 0 <= count <= 100:
+        raise ValueError
+    return count
 
 
 def _names(value: Any) -> tuple[str, ...]:
