@@ -37,9 +37,13 @@ the local variables of your own code. A variable whose name looks secret
 (`password`, `token`, `api_key`, …) is sent as `[Filtered]`.
 
 Events are sent from a background thread, so capturing never waits on the
-network. A failed send is tried again twice; when the server asks the SDK to
-wait, it drops events until then. Whatever is still queued is sent when the
-program exits (for up to `shutdown_timeout` seconds).
+network. The first error opens a connection, and errors that follow within
+30 seconds reuse it, so HTTPS sets up once rather than per error; after 30
+quiet seconds it is closed, and none is open again until the next error. A
+failed send is tried again twice; when the server asks the SDK to wait, it
+drops events until then. Whatever is still queued is sent when the program
+exits (for up to `shutdown_timeout` seconds). A proxy set in `HTTPS_PROXY` or
+`HTTP_PROXY` (and skipped for hosts in `NO_PROXY`) is used.
 
 The SDK never raises and never stops your app. With no DSN or `enabled=False`
 it does nothing, and with an invalid DSN it prints one warning and does
@@ -116,6 +120,59 @@ def identify():
 
 Turn it off with `disabled_integrations=["flask"]`.
 
+## Django
+
+Django 4.2 or newer is set up by `init` on its own. Call it in your settings:
+
+```python
+# settings.py
+import zapfault
+
+zapfault.init(dsn="...")
+```
+
+- Every request has its own scope, under WSGI (runserver, gunicorn) and ASGI
+  (uvicorn, daphne), in sync and async views: what you set in a middleware or
+  view stays with that request.
+- An error that becomes a 500, in a view or a middleware, is reported as
+  unhandled, also with `DEBUG = True`. `Http404`, `PermissionDenied`,
+  `BadRequest` and `SuspiciousOperation` aren't: Django answers them with a 4xx.
+- Events show the URL pattern as written (`GET /orders/<int:order_id>/`), the
+  request as for Flask, and the signed-in user's ID (`request.user.pk`) unless
+  you called `set_user`. These are read only when an event is sent.
+
+Turn it off with `disabled_integrations=["django"]`.
+
+## FastAPI
+
+FastAPI (and any Starlette app, Starlette 0.27 or newer) is set up by `init` on
+its own, before or after you create the app:
+
+```python
+import zapfault
+from fastapi import Depends, FastAPI, Request
+
+zapfault.init(dsn="...")
+app = FastAPI()
+
+
+def identify(request: Request):
+    zapfault.set_user({"id": request.state.user_id})   # for this request only
+
+
+@app.get("/orders/{order_id}", dependencies=[Depends(identify)])
+async def order(order_id: int): ...
+```
+
+- Every request has its own scope, in async endpoints and in plain `def`
+  endpoints, which FastAPI runs in a thread.
+- An error that becomes a 500 is reported as unhandled. `HTTPException` and
+  errors your own `@app.exception_handler` handles aren't.
+- Events show the route as written (`GET /orders/{order_id}`) and the request
+  as for Flask.
+
+Turn it off with `disabled_integrations=["fastapi"]`.
+
 ## Options
 
 Each option can be passed to `init` or set in the environment. An argument wins
@@ -139,7 +196,7 @@ over the environment variable.
 | `tags` | | Tags sent with every event, like `{"region": "eu"}` |
 | `max_breadcrumbs` | | `100`: breadcrumbs kept for the next error (0 to 100) |
 | `logging_breadcrumbs` | | `True`: log records at `INFO` and above become breadcrumbs |
-| `disabled_integrations` | | Integrations to leave off, like `["flask"]` |
+| `disabled_integrations` | | Integrations to leave off: `"flask"`, `"django"`, `"fastapi"` |
 
 ## Functions
 

@@ -14,7 +14,7 @@ import re
 import threading
 from collections import deque
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 from ._debug import debug
 from ._event import truncate
@@ -37,9 +37,10 @@ class Scope:
         self._tags: dict[str, str] = {}
         self._contexts: dict[str, Any] = {}
         self._breadcrumbs: deque = deque(maxlen=max_breadcrumbs)
-        # Set by integrations: the request being handled and its route.
-        self.request: dict[str, Any] | None = None
-        self.route: str | None = None
+        # Functions that fill an event in when it is sent: integrations add the
+        # request this way, so requests without errors read nothing.
+        self._processors: list[Callable[[dict], None]] = []
+        self.in_request = False  # set on the scope an integration opens for a request
 
     def copy(self, breadcrumbs: bool = True) -> Scope:
         new = Scope(self._breadcrumbs.maxlen or 100)
@@ -47,7 +48,8 @@ class Scope:
             new._user, new._tags, new._contexts = dict(self._user), dict(self._tags), dict(self._contexts)
             if breadcrumbs:
                 new._breadcrumbs.extend(self._breadcrumbs)
-        new.request, new.route = self.request, self.route
+        new._processors = list(self._processors)
+        new.in_request = self.in_request
         return new
 
     def set_user(self, user: dict[str, Any] | None) -> None:
@@ -122,6 +124,10 @@ class Scope:
             crumb["data"] = json_safe(data)
         self._breadcrumbs.append(crumb)  # a full deque drops the oldest
 
+    def add_processor(self, processor: Callable[[dict], None]) -> None:
+        """processor(item) runs when an event is sent, after the scope's data is in."""
+        self._processors.append(processor)
+
     def apply(self, item: dict) -> None:
         """Copies the scope's data into an event item."""
         with self._lock:
@@ -133,10 +139,11 @@ class Scope:
                 item["contexts"] = dict(self._contexts)
             if self._breadcrumbs:
                 item["breadcrumbs"] = list(self._breadcrumbs)
-        if self.request:
-            item["request"] = self.request
-        if self.route:
-            item["route"] = self.route
+        for processor in self._processors:
+            try:
+                processor(item)
+            except Exception as e:
+                debug(f"filling in the event failed: {e!r}")
 
 
 _global = Scope()

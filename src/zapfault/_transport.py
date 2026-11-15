@@ -1,8 +1,11 @@
 """Sending envelopes. HttpTransport posts them from a background thread, so a
-capture never waits on the network; ConsoleTransport prints them instead."""
+capture never waits on the network, over one connection it keeps open while
+events keep coming (no new TLS handshake per event); ConsoleTransport prints
+them instead."""
 
 from __future__ import annotations
 
+import base64
 import gzip
 import json
 import os
@@ -12,6 +15,8 @@ import sys
 import threading
 import time
 from datetime import datetime, timezone
+from typing import Any
+from urllib.parse import unquote, urlsplit
 
 from ._debug import debug, warn_once
 from ._dsn import Dsn
@@ -20,6 +25,9 @@ from ._version import __version__
 USER_AGENT = f"zapfault.python/{__version__}"
 ATTEMPTS = 3
 DEFAULT_PAUSE = 60.0
+TIMEOUT = 5.0
+IDLE_CLOSE = 30.0  # close the connection after this long without events (the server waits 60 s)
+MAX_AGE = 300.0  # and open a new one at least this often, so it follows DNS and load balancers
 
 
 def utc_now() -> str:
@@ -41,6 +49,11 @@ class HttpTransport:
         self._lock = threading.Lock()
         self._queue: queue.Queue = queue.Queue(self._max_queue_size)
         self._thread: threading.Thread | None = None
+        # Used by the sender thread only: the connection, the path to post to,
+        # headers a proxy needs, and when it was opened.
+        self._conn: Any = None
+        self._path, self._extra = "", {}
+        self._opened = 0.0
 
     def send(self, envelope: dict) -> None:
         """Queues the envelope and returns at once; a full queue drops it."""
@@ -81,9 +94,14 @@ class HttpTransport:
 
     def _run(self) -> None:
         while True:
-            envelope = self._queue.get()
+            try:
+                envelope = self._queue.get(timeout=IDLE_CLOSE if self._conn else None)
+            except queue.Empty:
+                self._disconnect("idle")  # the next event opens a new one
+                continue
             try:
                 if envelope is None:
+                    self._disconnect("closing")
                     return
                 self._deliver(envelope)
             except Exception as e:
@@ -120,9 +138,6 @@ class HttpTransport:
 
     def _post(self, envelope: dict) -> tuple[int | None, float]:
         """Returns the status (None for a network error) and Retry-After."""
-        from urllib.error import HTTPError
-        from urllib.request import Request, urlopen
-
         # Set now, not at capture: the server compares it with its own clock
         # to correct events from machines whose clock is wrong.
         envelope["sent_at"] = utc_now()
@@ -135,18 +150,71 @@ class HttpTransport:
         if len(body) > 1024:
             body = gzip.compress(body)
             headers["Content-Encoding"] = "gzip"
-        request = Request(self._dsn.endpoint, body, headers, method="POST")
-        try:
-            with urlopen(request, timeout=5) as response:
-                debug(f"sent, the server answered {response.status}")
-                return response.status, 0
-        except HTTPError as e:
-            detail = e.read(500).decode(errors="replace")
-            debug(f"the server answered {e.code}: {detail}")
-            return e.code, _retry_after(e.headers.get("Retry-After"))
-        except OSError as e:
-            debug(f"could not reach the server: {e}")
-            return None, 0
+        # A kept-open connection the server closed meanwhile fails before the
+        # request gets there; that one is sent again at once on a new connection.
+        for stale_retry in (True, False):
+            reused = self._conn is not None
+            try:
+                status, retry_after, detail = self._request(body, headers)
+            except Exception as e:
+                self._disconnect("failed")
+                if reused and stale_retry and isinstance(e, ConnectionError):
+                    continue
+                debug(f"could not reach the server: {e!r}")
+                return None, 0
+            if status >= 300:
+                debug(f"the server answered {status}: {detail[:500].decode(errors='replace')}")
+                return status, _retry_after(retry_after)
+            debug(f"sent, the server answered {status}")
+            return status, 0
+        return None, 0
+
+    def _request(self, body: bytes, headers: dict) -> tuple[int, str | None, bytes]:
+        if self._conn is not None and time.monotonic() - self._opened > MAX_AGE:
+            self._disconnect("too old")
+        if self._conn is None:
+            self._conn, self._path, self._extra = _connect(self._dsn.endpoint)
+            self._opened = time.monotonic()
+        self._conn.request("POST", self._path, body, {**headers, **self._extra})
+        response = self._conn.getresponse()
+        detail = response.read()  # all of it, or the connection can't be used again
+        return response.status, response.getheader("Retry-After"), detail
+
+    def _disconnect(self, why: str) -> None:
+        if self._conn is not None:
+            debug(f"connection closed ({why})")
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            self._conn = None
+
+
+def _connect(endpoint: str) -> tuple[Any, str, dict]:
+    """A connection to the server, or through the proxy that HTTPS_PROXY,
+    HTTP_PROXY or the system names for it; the path to post to; and headers
+    for the proxy."""
+    import http.client
+    from urllib.request import getproxies, proxy_bypass
+
+    url = urlsplit(endpoint)
+    https = url.scheme == "https"
+    connection = http.client.HTTPSConnection if https else http.client.HTTPConnection
+    proxy = None if proxy_bypass(url.hostname or "") else getproxies().get(url.scheme)
+    if not proxy:
+        debug(f"connecting to {url.netloc}")
+        return connection(url.hostname, url.port, timeout=TIMEOUT), url.path, {}
+    p = urlsplit(proxy if "://" in proxy else "http://" + proxy)
+    auth = {}
+    if p.username:
+        token = base64.b64encode(f"{unquote(p.username)}:{unquote(p.password or '')}".encode()).decode()
+        auth = {"Proxy-Authorization": f"Basic {token}"}
+    debug(f"connecting to {url.netloc} through the proxy {p.hostname}")
+    conn = connection(p.hostname, p.port or 8080, timeout=TIMEOUT)
+    if https:  # a CONNECT tunnel, with TLS to the server inside it
+        conn.set_tunnel(url.hostname, url.port or 443, headers=auth)
+        return conn, url.path, {}
+    return conn, endpoint, auth  # plain HTTP: the proxy gets the full URL
 
 
 def _retry_after(value: str | None) -> float:
