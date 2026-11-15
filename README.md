@@ -81,9 +81,40 @@ with zapfault.scope() as scope:
 
 Each thread and each asyncio task sees its own data inside a `scope()` block,
 so concurrent work never mixes. In a web app, every request needs its own
-block: the framework integrations (coming soon) open one per request for you.
-Until then, data you set during a request without a `scope()` block stays for
-the requests that follow.
+block: the framework integrations below open one per request for you.
+
+## Flask
+
+Flask 2.3 or newer is set up by `init` on its own, before or after you create
+the app:
+
+```python
+import zapfault
+from flask import Flask
+
+zapfault.init(dsn="...")
+app = Flask(__name__)
+
+
+@app.before_request
+def identify():
+    if current_user.is_authenticated:
+        zapfault.set_user({"id": current_user.id})   # for this request only
+```
+
+- Every request has its own scope: the user, tags and breadcrumbs set while
+  handling it never show on another request's errors.
+- An error that a route turns into a 500 is reported as unhandled. HTTP errors
+  such as `abort(404)` aren't, and neither are errors your own
+  `@app.errorhandler` handles: call `zapfault.capture_exception(error)` there
+  to report them.
+- Events show the route as written (`GET /orders/<int:order_id>`), the method,
+  URL, query string and headers. The body, cookies and the client's IP are
+  never sent; `Cookie`, `Authorization` and forwarded-IP headers are left out,
+  and headers or query parameters with secret-looking names are sent as
+  `[Filtered]`.
+
+Turn it off with `disabled_integrations=["flask"]`.
 
 ## Options
 
@@ -108,6 +139,7 @@ over the environment variable.
 | `tags` | | Tags sent with every event, like `{"region": "eu"}` |
 | `max_breadcrumbs` | | `100`: breadcrumbs kept for the next error (0 to 100) |
 | `logging_breadcrumbs` | | `True`: log records at `INFO` and above become breadcrumbs |
+| `disabled_integrations` | | Integrations to leave off, like `["flask"]` |
 
 ## Functions
 

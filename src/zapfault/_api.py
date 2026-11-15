@@ -11,7 +11,7 @@ import threading
 from contextlib import contextmanager
 from typing import Any, Iterator
 
-from . import _debug, _hooks, _logging, _scope
+from . import _debug, _hooks, _logging, _scope, integrations
 from ._client import Client
 from ._dsn import parse_dsn
 from ._options import Options
@@ -31,13 +31,15 @@ def init(dsn: str | None = None, **options: Any) -> None:
             if old is not None:
                 old.transport.close(old.options.shutdown_timeout)
             _client = _create(Options({"dsn": dsn, **options}))
-            if _client is not None:
-                _scope.reset(_client.options.tags, _client.options.max_breadcrumbs)
-            if _client is not None and not _installed:
+            if _client is None:
+                return
+            _scope.reset(_client.options.tags, _client.options.max_breadcrumbs)
+            if not _installed:
                 atexit.register(_at_exit)
                 _hooks.install(_capture_unhandled)
                 _logging.install(_log_breadcrumb)
                 _installed = True
+            integrations.setup(_client.options.disabled_integrations)
     except Exception as e:
         _debug.debug(f"init failed: {e!r}")
 
@@ -173,6 +175,11 @@ def _capture_unhandled(error: BaseException, mechanism: str) -> None:
         client.capture_exception(error, mechanism, handled=False)
     except Exception as e:
         _debug.debug(f"capturing an uncaught exception failed: {e!r}")
+
+
+def _integration_on(name: str) -> bool:
+    client = _client
+    return client is not None and name not in client.options.disabled_integrations
 
 
 def _on_scope(method: str, *args: Any) -> None:

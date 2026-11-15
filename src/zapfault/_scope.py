@@ -37,12 +37,17 @@ class Scope:
         self._tags: dict[str, str] = {}
         self._contexts: dict[str, Any] = {}
         self._breadcrumbs: deque = deque(maxlen=max_breadcrumbs)
+        # Set by integrations: the request being handled and its route.
+        self.request: dict[str, Any] | None = None
+        self.route: str | None = None
 
-    def copy(self) -> Scope:
+    def copy(self, breadcrumbs: bool = True) -> Scope:
         new = Scope(self._breadcrumbs.maxlen or 100)
         with self._lock:
             new._user, new._tags, new._contexts = dict(self._user), dict(self._tags), dict(self._contexts)
-            new._breadcrumbs.extend(self._breadcrumbs)
+            if breadcrumbs:
+                new._breadcrumbs.extend(self._breadcrumbs)
+        new.request, new.route = self.request, self.route
         return new
 
     def set_user(self, user: dict[str, Any] | None) -> None:
@@ -128,6 +133,10 @@ class Scope:
                 item["contexts"] = dict(self._contexts)
             if self._breadcrumbs:
                 item["breadcrumbs"] = list(self._breadcrumbs)
+        if self.request:
+            item["request"] = self.request
+        if self.route:
+            item["route"] = self.route
 
 
 _global = Scope()
@@ -138,6 +147,11 @@ def current() -> Scope:
     return _active.get() or _global
 
 
+def active() -> Scope | None:
+    """The scope of the scope() block or request being run, if any."""
+    return _active.get()
+
+
 def reset(tags: dict[str, Any], max_breadcrumbs: int) -> None:
     """init starts the process-wide scope over with its options."""
     global _global
@@ -146,11 +160,12 @@ def reset(tags: dict[str, Any], max_breadcrumbs: int) -> None:
 
 
 @contextmanager
-def fork() -> Iterator[Scope]:
+def fork(breadcrumbs: bool = True) -> Iterator[Scope]:
     """A copy of the active scope for the block. An exception leaving the block
     keeps the copy, so it is reported with the block's data even when it's
-    only caught (or not) after the block ends."""
-    scope = current().copy()
+    only caught (or not) after the block ends. A request starts without the
+    breadcrumbs logged outside it, such as other requests' access log lines."""
+    scope = current().copy(breadcrumbs)
     token = _active.set(scope)
     try:
         yield scope

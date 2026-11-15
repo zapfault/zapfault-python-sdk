@@ -38,6 +38,7 @@ class Options:
         self.tags = _get(args, "tags", dict, {}, env=False)
         self.max_breadcrumbs = _get(args, "max_breadcrumbs", _breadcrumbs, 100, env=False)
         self.logging_breadcrumbs = _get(args, "logging_breadcrumbs", _bool, True, env=False)
+        self.disabled_integrations = _get(args, "disabled_integrations", _names, (), env=False)
         for name in args:
             warn_once(f"unknown option {name!r} ignored")
 
@@ -115,7 +116,7 @@ def _breadcrumbs(value: Any) -> int:
 
 
 def _names(value: Any) -> tuple[str, ...]:
-    """Module name prefixes: one string or a list of them."""
+    """Names or module prefixes: one string or a list of them."""
     if isinstance(value, str):
         return (value,)
     return tuple(str(name) for name in value)
