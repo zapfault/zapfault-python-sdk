@@ -14,11 +14,13 @@ import importlib
 import importlib.metadata
 import importlib.util
 import re
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Callable, Iterator
+from typing import Callable
 
 from .. import _api, _scope
 from .._debug import debug
+from .._protocol import Event
 
 # Integration name -> (the package it patches, its oldest supported version).
 AVAILABLE = {
@@ -52,7 +54,7 @@ def on(name: str) -> bool:
 
 
 @contextmanager
-def request_scope(name: str, fill: Callable[[dict], None]) -> Iterator[None]:
+def request_scope(name: str, fill: Callable[[Event], None]) -> Iterator[None]:
     """Runs one request in its own scope, which starts without the breadcrumbs
     logged outside it. A request already in one, like an app mounted in
     another, keeps that one."""

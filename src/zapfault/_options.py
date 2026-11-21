@@ -4,9 +4,12 @@ variable, then the default."""
 from __future__ import annotations
 
 import os
-from typing import Any, Callable
+from typing import Any, Callable, TypeVar
 
 from ._debug import warn_once
+from ._protocol import BeforeSend
+
+T = TypeVar("T")
 
 # Hosting platforms that set the deployed commit for us.
 _RELEASE_VARS = (
@@ -20,27 +23,29 @@ _RELEASE_VARS = (
 
 
 class Options:
+    """init's arguments, None where not given. The types already rule out most
+    mistakes; values are still checked, as they also come from the
+    environment and from untyped code."""
+
     def __init__(self, args: dict[str, Any]) -> None:
-        args = dict(args)
-        self.dsn = _get(args, "dsn", str)
-        self.enabled = _get(args, "enabled", _bool, True)
-        self.debug = _get(args, "debug", _bool, False)
-        self.environment = _get(args, "environment", str) or _env("APP_ENV", "ENVIRONMENT") or "production"
-        self.release = _get(args, "release", str) or _env(*_RELEASE_VARS)
-        self.service = _get(args, "service", str)
-        self.sample_rate = _get(args, "sample_rate", _rate, 1.0)
-        self.transport = _get(args, "transport", _transport, "http")
-        self.max_queue_size = _get(args, "max_queue_size", _count, 100, env=False)
-        self.shutdown_timeout = _get(args, "shutdown_timeout", _seconds, 2.0, env=False)
-        self.include_local_variables = _get(args, "include_local_variables", _bool, True, env=False)
-        self.in_app_include = _get(args, "in_app_include", _names, (), env=False)
-        self.in_app_exclude = _get(args, "in_app_exclude", _names, (), env=False)
-        self.tags = _get(args, "tags", dict, {}, env=False)
-        self.max_breadcrumbs = _get(args, "max_breadcrumbs", _breadcrumbs, 100, env=False)
-        self.logging_breadcrumbs = _get(args, "logging_breadcrumbs", _bool, True, env=False)
-        self.disabled_integrations = _get(args, "disabled_integrations", _names, (), env=False)
-        for name in args:
-            warn_once(f"unknown option {name!r} ignored")
+        self.dsn: str | None = _get(args, "dsn", str, None)
+        self.enabled: bool = _get(args, "enabled", _bool, True)
+        self.debug: bool = _get(args, "debug", _bool, False)
+        self.environment: str = _get(args, "environment", str, None) or _env("APP_ENV", "ENVIRONMENT") or "production"
+        self.release: str | None = _get(args, "release", str, None) or _env(*_RELEASE_VARS)
+        self.service: str | None = _get(args, "service", str, None)
+        self.sample_rate: float = _get(args, "sample_rate", _rate, 1.0)
+        self.transport: str = _get(args, "transport", _transport, "http")
+        self.max_queue_size: int = _get(args, "max_queue_size", _count, 100, env=False)
+        self.shutdown_timeout: float = _get(args, "shutdown_timeout", _seconds, 2.0, env=False)
+        self.before_send: BeforeSend | None = _get(args, "before_send", _callable, None, env=False)
+        self.include_local_variables: bool = _get(args, "include_local_variables", _bool, True, env=False)
+        self.in_app_include: tuple[str, ...] = _get(args, "in_app_include", _names, (), env=False)
+        self.in_app_exclude: tuple[str, ...] = _get(args, "in_app_exclude", _names, (), env=False)
+        self.tags: dict[str, Any] = _get(args, "tags", dict, {}, env=False)
+        self.max_breadcrumbs: int = _get(args, "max_breadcrumbs", _breadcrumbs, 100, env=False)
+        self.logging_breadcrumbs: bool = _get(args, "logging_breadcrumbs", _bool, True, env=False)
+        self.disabled_integrations: tuple[str, ...] = _get(args, "disabled_integrations", _names, (), env=False)
 
 
 def git_release() -> str | None:
@@ -48,16 +53,14 @@ def git_release() -> str | None:
     import subprocess
 
     try:
-        result = subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=1, check=True
-        )
+        result = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=1, check=True)
     except (OSError, subprocess.SubprocessError):
         return None
     return result.stdout.strip() or None
 
 
-def _get(args: dict[str, Any], name: str, convert: Callable[[Any], Any], default: Any = None, env: bool = True) -> Any:
-    value = args.pop(name, None)
+def _get(args: dict[str, Any], name: str, convert: Callable[[Any], T], default: T, env: bool = True) -> T:
+    value = args.get(name)
     if value is None and env:
         value = os.environ.get("ZAPFAULT_" + name.upper()) or None
     if value is None:
@@ -122,7 +125,13 @@ def _names(value: Any) -> tuple[str, ...]:
     return tuple(str(name) for name in value)
 
 
+def _callable(value: Any) -> Any:
+    if not callable(value):
+        raise TypeError
+    return value
+
+
 def _transport(value: Any) -> str:
     if value not in ("http", "console"):
         raise ValueError
-    return value
+    return str(value)

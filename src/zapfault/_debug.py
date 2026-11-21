@@ -3,7 +3,7 @@
 import sys
 
 enabled = False
-_warned = set()
+_warned: set[str] = set()
 
 
 def debug(message: str) -> None:

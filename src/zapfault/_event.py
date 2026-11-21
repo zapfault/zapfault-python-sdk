@@ -11,6 +11,7 @@ from types import FrameType, TracebackType
 from typing import Any
 
 from ._options import Options
+from ._protocol import ExceptionValue, Frame, Stacktrace
 
 MAX_CHAIN = 10
 MAX_FRAMES = 100
@@ -21,9 +22,24 @@ CONTEXT_LINES = 5
 
 # A variable whose name contains one of these is sent as "[Filtered]".
 SENSITIVE = (
-    "password", "passwd", "pwd", "secret", "token", "api_key", "apikey", "access_key",
-    "private_key", "auth", "cookie", "session", "csrf", "xsrf", "credit_card",
-    "card_number", "cvv", "ssn",
+    "password",
+    "passwd",
+    "pwd",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "access_key",
+    "private_key",
+    "auth",
+    "cookie",
+    "session",
+    "csrf",
+    "xsrf",
+    "credit_card",
+    "card_number",
+    "cvv",
+    "ssn",
 )
 
 _STDLIB = os.path.dirname(os.__file__)
@@ -32,10 +48,10 @@ _repr = reprlib.Repr()
 _repr.maxstring = _repr.maxother = MAX_REPR
 
 
-def exception_values(error: BaseException, options: Options) -> list[dict]:
+def exception_values(error: BaseException, options: Options) -> list[ExceptionValue]:
     """The chain ordered root cause first, the raised exception last."""
     chain: list[BaseException] = []
-    seen = set()
+    seen: set[int] = set()
     current: BaseException | None = error
     while current is not None and id(current) not in seen and len(chain) < MAX_CHAIN:
         seen.add(id(current))
@@ -54,9 +70,9 @@ def truncate(text: str, limit: int = MAX_VALUE) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-def _exception(error: BaseException, cwd: str, options: Options) -> dict:
+def _exception(error: BaseException, cwd: str, options: Options) -> ExceptionValue:
     cls = type(error)
-    value: dict[str, Any] = {"type": cls.__qualname__}
+    value: ExceptionValue = {"type": cls.__qualname__}
     if cls.__module__ not in ("builtins", "__main__"):
         value["module"] = cls.__module__
     try:
@@ -70,28 +86,28 @@ def _exception(error: BaseException, cwd: str, options: Options) -> dict:
     return value
 
 
-def _stacktrace(tb: TracebackType | None, cwd: str, options: Options) -> dict:
+def _stacktrace(tb: TracebackType | None, cwd: str, options: Options) -> Stacktrace:
     stack = []
     while tb is not None:
         stack.append((tb.tb_frame, tb.tb_lineno))
         tb = tb.tb_next
-    stacktrace: dict[str, Any] = {}
+    stacktrace: Stacktrace = {}
     if len(stack) > MAX_FRAMES:
         # Keep where it started and where it raised; deep recursion is in between.
         half = MAX_FRAMES // 2
-        stacktrace["frames_omitted"] = [half, len(stack) - half]
+        stacktrace["frames_omitted"] = (half, len(stack) - half)
         stack = stack[:half] + stack[-half:]
     stacktrace["frames"] = [_frame(frame, line, cwd, options) for frame, line in stack]
     return stacktrace
 
 
-def _frame(frame: FrameType, lineno: int | None, cwd: str, options: Options) -> dict:
+def _frame(frame: FrameType, lineno: int | None, cwd: str, options: Options) -> Frame:
     code = frame.f_code
     path = code.co_filename
     module = frame.f_globals.get("__name__")
     module = module if isinstance(module, str) else None
     in_app = _in_app(path, module, options)
-    item: dict[str, Any] = {
+    item: Frame = {
         "filename": _display_path(path, cwd),
         "abs_path": path,
         # co_name ("total"), not co_qualname ("Cart.total", 3.11+ only): the

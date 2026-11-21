@@ -24,10 +24,11 @@ def parse_dsn(value: str) -> Dsn:
         url.port
     except ValueError:
         raise ValueError("its port is invalid") from None
-    if not re.fullmatch("[0-9a-f]{32}", url.username or ""):
+    key = url.username or ""
+    if not re.fullmatch("[0-9a-f]{32}", key):
         raise ValueError("the public key before @ must be 32 lowercase hex characters")
     prefix, _, project = url.path.rstrip("/").rpartition("/")
     if not re.fullmatch("[0-9]+", project):
         raise ValueError("it must end with the project ID, a number")
     host = url.netloc.rpartition("@")[2]
-    return Dsn(url.username, f"{url.scheme}://{host}{prefix}/ingest/v1/{project}/envelope")
+    return Dsn(key, f"{url.scheme}://{host}{prefix}/ingest/v1/{project}/envelope")

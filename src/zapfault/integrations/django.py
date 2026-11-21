@@ -12,6 +12,7 @@ from django.core.handlers.base import BaseHandler
 from django.core.signals import got_request_exception
 
 from .._debug import debug
+from .._protocol import Event
 from . import capture, request_scope
 from ._request import from_environ
 
@@ -33,8 +34,8 @@ def setup_once() -> None:
         with request_scope(NAME, functools.partial(_fill, request)):
             return await asynchronous(self, request)
 
-    BaseHandler.get_response = get_response  # type: ignore[method-assign]
-    BaseHandler.get_response_async = get_response_async  # type: ignore[method-assign]
+    BaseHandler.get_response = get_response
+    BaseHandler.get_response_async = get_response_async
     got_request_exception.connect(_on_exception, weak=False, dispatch_uid="zapfault")
 
 
@@ -46,7 +47,7 @@ def _on_exception(sender: Any, **extra: Any) -> None:
         capture(error, NAME)
 
 
-def _fill(request: Any, item: dict) -> None:
+def _fill(request: Any, item: Event) -> None:
     match = getattr(request, "resolver_match", None)
     if "route" not in item and match is not None and match.route:
         item["route"] = f"{request.method} /{match.route}"

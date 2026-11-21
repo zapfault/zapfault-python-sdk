@@ -47,7 +47,8 @@ exits (for up to `shutdown_timeout` seconds). A proxy set in `HTTPS_PROXY` or
 
 The SDK never raises and never stops your app. With no DSN or `enabled=False`
 it does nothing, and with an invalid DSN it prints one warning and does
-nothing.
+nothing. The one exception is a misspelled option: `init(sample_rat=0.5)`
+raises Python's own `TypeError` at startup, so the mistake can't go unnoticed.
 
 ## Adding context
 
@@ -55,7 +56,7 @@ Tell Zapfault who was affected and what was going on. Whatever you set is sent
 with every error that follows:
 
 ```python
-zapfault.set_user({"id": "4821", "email": "asha@example.com"})   # None clears it
+zapfault.set_user({"id": "4821", "email": "asha@example.com", "attributes": {"plan": "pro"}})  # None clears it
 zapfault.set_tag("plan", "pro")                                   # searchable; None removes it
 zapfault.set_tags({"tenant": "acme", "feature": "checkout"})
 zapfault.set_context("cart", {"items": 3, "total": 49.99})        # shown on the event, not searchable
@@ -78,9 +79,9 @@ block. An error raised in the block keeps its data even when it is caught (or
 crashes the program) after the block.
 
 ```python
-with zapfault.scope() as scope:
-    scope.set_tag("job", "nightly-sync")
-    run_sync()
+with zapfault.scope():
+    zapfault.set_tag("job", "nightly-sync")
+    run_sync()  # its errors have job=nightly-sync; nothing leaks out
 ```
 
 Each thread and each asyncio task sees its own data inside a `scope()` block,
@@ -197,19 +198,50 @@ over the environment variable.
 | `max_breadcrumbs` | | `100`: breadcrumbs kept for the next error (0 to 100) |
 | `logging_breadcrumbs` | | `True`: log records at `INFO` and above become breadcrumbs |
 | `disabled_integrations` | | Integrations to leave off: `"flask"`, `"django"`, `"fastapi"` |
+| `before_send` | | Called with each event and a hint before it is sent; return the event, changed or not, or `None` to drop it. `hint["original_exception"]` is the exception itself. If it raises, the event is dropped. |
+
+## Types
+
+The package ships its types, so editors show every option and function with
+its description, and mypy or Pyright catch a misspelled option or level before
+the code runs:
+
+```python
+from typing import Optional
+
+import zapfault
+from zapfault import Event, Hint
+
+
+class ClientGone(Exception): ...
+
+
+def before_send(event: Event, hint: Hint) -> Optional[Event]:
+    if isinstance(hint["original_exception"], ClientGone):
+        return None
+    event.get("request", {}).pop("query_string", None)
+    return event
+
+
+zapfault.init(sample_rate=0.5, before_send=before_send)
+zapfault.capture_message("Payment provider is slow", level="warn")  # mypy: "warn" is not a Level
+```
+
+`Event`, `Hint`, `User`, `Breadcrumb` and `Request` are `TypedDict`s; `Level`,
+`BreadcrumbType` and `Integration` are the allowed strings.
 
 ## Functions
 
 | Function | |
 |---|---|
-| `init(dsn=None, **options)` | Turns the SDK on. Calling it again replaces the earlier setup. |
+| `init(dsn=None, *, options…)` | Turns the SDK on. Calling it again replaces the earlier setup. |
 | `capture_exception(error=None)` | Sends an exception; without one, the exception being handled in the current `except` block. Returns the event ID. |
 | `capture_message(message, level="info")` | Sends a message. `level` is `fatal`, `error`, `warning`, `info` or `debug`. Returns the event ID. |
 | `flush(timeout=2.0)` | Waits until everything captured so far is sent. Use it before a short script or a serverless function ends. |
 | `close(timeout=2.0)` | Flushes, then turns the SDK off. |
 | `is_enabled()` | Whether the SDK is on. |
-| `set_user(user)` | Who was affected: `id`, `email`, `username`, `ip_address`; other keys are kept as attributes. `None` clears it. |
+| `set_user(user)` | Who was affected: `id`, `email`, `username`, `ip_address`, `attributes`. `None` clears it. |
 | `set_tag(key, value)`, `set_tags(tags)` | Searchable key and value pairs. `None` removes a tag. |
 | `set_context(name, value)` | A dict shown on the event. `None` removes it. |
 | `add_breadcrumb(message=None, category=None, level="info", data=None, type="default")` | Records a step that led up to an error. |
-| `scope()` | A `with` block whose changes stay inside it. The scope it gives has the same `set_*` and `add_breadcrumb` methods. |
+| `scope()` | A `with` block: what the functions above set inside it stays inside it. |

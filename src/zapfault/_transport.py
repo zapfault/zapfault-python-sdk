@@ -15,11 +15,12 @@ import sys
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import unquote, urlsplit
 
 from ._debug import debug, warn_once
 from ._dsn import Dsn
+from ._protocol import Envelope
 from ._version import __version__
 
 USER_AGENT = f"zapfault.python/{__version__}"
@@ -28,6 +29,12 @@ DEFAULT_PAUSE = 60.0
 TIMEOUT = 5.0
 IDLE_CLOSE = 30.0  # close the connection after this long without events (the server waits 60 s)
 MAX_AGE = 300.0  # and open a new one at least this often, so it follows DNS and load balancers
+
+
+class Transport(Protocol):
+    def send(self, envelope: Envelope) -> None: ...
+    def flush(self, timeout: float) -> bool: ...
+    def close(self, timeout: float) -> bool: ...
 
 
 def utc_now() -> str:
@@ -47,15 +54,16 @@ class HttpTransport:
         # (and maybe a copy of a lock held by it), so it starts over.
         self._pid = os.getpid()
         self._lock = threading.Lock()
-        self._queue: queue.Queue = queue.Queue(self._max_queue_size)
+        self._queue: queue.Queue[Envelope | None] = queue.Queue(self._max_queue_size)
         self._thread: threading.Thread | None = None
         # Used by the sender thread only: the connection, the path to post to,
         # headers a proxy needs, and when it was opened.
         self._conn: Any = None
-        self._path, self._extra = "", {}
+        self._path: str = ""
+        self._extra: dict[str, str] = {}
         self._opened = 0.0
 
-    def send(self, envelope: dict) -> None:
+    def send(self, envelope: Envelope) -> None:
         """Queues the envelope and returns at once; a full queue drops it."""
         if self._closed:
             return
@@ -115,7 +123,7 @@ class HttpTransport:
             return True
         return False
 
-    def _deliver(self, envelope: dict) -> None:
+    def _deliver(self, envelope: Envelope) -> None:
         """Posts the envelope, trying again after a network error or a 5xx."""
         for attempt in range(ATTEMPTS):
             if self._paused():
@@ -136,7 +144,7 @@ class HttpTransport:
                 return  # sent, or a 4xx: sending it again would fail the same way
         debug(f"the envelope was dropped after {ATTEMPTS} attempts")
 
-    def _post(self, envelope: dict) -> tuple[int | None, float]:
+    def _post(self, envelope: Envelope) -> tuple[int | None, float]:
         """Returns the status (None for a network error) and Retry-After."""
         # Set now, not at capture: the server compares it with its own clock
         # to correct events from machines whose clock is wrong.
@@ -169,7 +177,7 @@ class HttpTransport:
             return status, 0
         return None, 0
 
-    def _request(self, body: bytes, headers: dict) -> tuple[int, str | None, bytes]:
+    def _request(self, body: bytes, headers: dict[str, str]) -> tuple[int, str | None, bytes]:
         if self._conn is not None and time.monotonic() - self._opened > MAX_AGE:
             self._disconnect("too old")
         if self._conn is None:
@@ -190,7 +198,7 @@ class HttpTransport:
             self._conn = None
 
 
-def _connect(endpoint: str) -> tuple[Any, str, dict]:
+def _connect(endpoint: str) -> tuple[Any, str, dict[str, str]]:
     """A connection to the server, or through the proxy that HTTPS_PROXY,
     HTTP_PROXY or the system names for it; the path to post to; and headers
     for the proxy."""
@@ -198,21 +206,22 @@ def _connect(endpoint: str) -> tuple[Any, str, dict]:
     from urllib.request import getproxies, proxy_bypass
 
     url = urlsplit(endpoint)
+    host = url.hostname or ""
     https = url.scheme == "https"
     connection = http.client.HTTPSConnection if https else http.client.HTTPConnection
-    proxy = None if proxy_bypass(url.hostname or "") else getproxies().get(url.scheme)
+    proxy = None if proxy_bypass(host) else getproxies().get(url.scheme)
     if not proxy:
         debug(f"connecting to {url.netloc}")
-        return connection(url.hostname, url.port, timeout=TIMEOUT), url.path, {}
+        return connection(host, url.port, timeout=TIMEOUT), url.path, {}
     p = urlsplit(proxy if "://" in proxy else "http://" + proxy)
     auth = {}
     if p.username:
         token = base64.b64encode(f"{unquote(p.username)}:{unquote(p.password or '')}".encode()).decode()
         auth = {"Proxy-Authorization": f"Basic {token}"}
     debug(f"connecting to {url.netloc} through the proxy {p.hostname}")
-    conn = connection(p.hostname, p.port or 8080, timeout=TIMEOUT)
+    conn = connection(p.hostname or "", p.port or 8080, timeout=TIMEOUT)
     if https:  # a CONNECT tunnel, with TLS to the server inside it
-        conn.set_tunnel(url.hostname, url.port or 443, headers=auth)
+        conn.set_tunnel(host, url.port or 443, headers=auth)
         return conn, url.path, {}
     return conn, endpoint, auth  # plain HTTP: the proxy gets the full URL
 
@@ -228,7 +237,7 @@ def _retry_after(value: str | None) -> float:
 class ConsoleTransport:
     """transport="console": prints each envelope to stderr, for development."""
 
-    def send(self, envelope: dict) -> None:
+    def send(self, envelope: Envelope) -> None:
         envelope["sent_at"] = utc_now()
         print(json.dumps(envelope, indent=2, default=str), file=sys.stderr)
 

@@ -5,21 +5,30 @@ are filtered."""
 
 from __future__ import annotations
 
-from typing import Any, Iterable
+from collections.abc import Iterable, Mapping
+from typing import Any
 from urllib.parse import quote, unquote
 
 from .._event import SENSITIVE, truncate
+from .._protocol import Request
 
 # Credentials, and the client's IP as proxies forward it.
 DROPPED_HEADERS = (
-    "cookie", "authorization", "proxy-authorization", "x-api-key",
-    "x-forwarded-for", "x-real-ip", "forwarded", "cf-connecting-ip", "true-client-ip",
+    "cookie",
+    "authorization",
+    "proxy-authorization",
+    "x-api-key",
+    "x-forwarded-for",
+    "x-real-ip",
+    "forwarded",
+    "cf-connecting-ip",
+    "true-client-ip",
 )
 MAX_HEADER = 1024
 MAX_HEADERS = 100
 
 
-def from_environ(environ: dict[str, Any], scheme: str | None = None, path: str | None = None) -> dict[str, Any]:
+def from_environ(environ: dict[str, Any], scheme: str | None = None, path: str | None = None) -> Request:
     """Django passes the scheme and path it already worked out: under ASGI its
     META has no wsgi.url_scheme, and paths aren't latin-1 decoded bytes."""
     scheme = scheme or environ.get("wsgi.url_scheme", "http")
@@ -34,16 +43,17 @@ def from_environ(environ: dict[str, Any], scheme: str | None = None, path: str |
     return _request(environ.get("REQUEST_METHOD", "GET"), scheme, host, path, environ.get("QUERY_STRING", ""), headers)
 
 
-def from_asgi(scope: dict[str, Any]) -> dict[str, Any]:
+def from_asgi(scope: Mapping[str, Any]) -> Request:
     scheme = scope.get("scheme", "http")
     headers = [(k.decode("latin-1"), v.decode("latin-1")) for k, v in scope.get("headers", ())]
-    host = next((v for k, v in headers if k.lower() == "host"), None) or _host(*(scope.get("server") or ("", None)), scheme)
+    name, port = scope.get("server") or ("", None)
+    host = next((v for k, v in headers if k.lower() == "host"), None) or _host(name, port, scheme)
     query = scope.get("query_string", b"").decode("latin-1")
     return _request(scope.get("method", "GET"), scheme, host, scope.get("path", ""), query, headers)
 
 
-def _request(method: str, scheme: str, host: str, path: str, query: str, headers: Iterable[tuple[str, str]]) -> dict[str, Any]:
-    data: dict[str, Any] = {
+def _request(method: str, scheme: str, host: str, path: str, query: str, headers: Iterable[tuple[str, str]]) -> Request:
+    data: Request = {
         "method": method,
         "url": truncate(f"{scheme}://{host}{quote(path, safe='/:@!$&()*+,;=~-._')}"),
     }

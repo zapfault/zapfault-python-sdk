@@ -8,6 +8,8 @@ from __future__ import annotations
 import logging
 from typing import Callable
 
+from ._protocol import Level
+
 _installed = False
 
 
@@ -27,7 +29,7 @@ def install(on_record: Callable[[logging.LogRecord], None]) -> None:
     logging.Logger.callHandlers = call_handlers  # type: ignore[method-assign]
 
 
-def level(levelno: int) -> str:
+def level(levelno: int) -> Level:
     if levelno >= logging.CRITICAL:
         return "fatal"
     if levelno >= logging.ERROR:

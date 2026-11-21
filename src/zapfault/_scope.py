@@ -13,11 +13,13 @@ import math
 import re
 import threading
 from collections import deque
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, cast
 
 from ._debug import debug
 from ._event import truncate
+from ._protocol import Breadcrumb, BreadcrumbType, Event, EventUser, Level, User
 from ._transport import utc_now
 
 MAX_TAGS = 50
@@ -26,34 +28,35 @@ MAX_DEPTH = 10
 MAX_ITEMS = 100
 TAG_KEY = re.compile(r"^[a-zA-Z0-9_.:-]{1,32}$")
 USER_FIELDS = ("id", "email", "username", "ip_address")
-LEVELS = ("fatal", "error", "warning", "info", "debug")
-BREADCRUMB_TYPES = ("default", "http", "navigation", "ui", "query", "log")
+LEVELS: tuple[Level, ...] = ("fatal", "error", "warning", "info", "debug")
+BREADCRUMB_TYPES: tuple[BreadcrumbType, ...] = ("default", "http", "navigation", "ui", "query", "log")
 
 
 class Scope:
     def __init__(self, max_breadcrumbs: int = 100) -> None:
         self._lock = threading.Lock()
-        self._user: dict[str, Any] = {}
+        self._user: EventUser = {}
         self._tags: dict[str, str] = {}
         self._contexts: dict[str, Any] = {}
-        self._breadcrumbs: deque = deque(maxlen=max_breadcrumbs)
+        self._breadcrumbs: deque[Breadcrumb] = deque(maxlen=max_breadcrumbs)
         # Functions that fill an event in when it is sent: integrations add the
         # request this way, so requests without errors read nothing.
-        self._processors: list[Callable[[dict], None]] = []
+        self._processors: list[Callable[[Event], None]] = []
         self.in_request = False  # set on the scope an integration opens for a request
 
     def copy(self, breadcrumbs: bool = True) -> Scope:
         new = Scope(self._breadcrumbs.maxlen or 100)
         with self._lock:
-            new._user, new._tags, new._contexts = dict(self._user), dict(self._tags), dict(self._contexts)
+            new._user, new._tags, new._contexts = self._user.copy(), dict(self._tags), dict(self._contexts)
             if breadcrumbs:
                 new._breadcrumbs.extend(self._breadcrumbs)
         new._processors = list(self._processors)
         new.in_request = self.in_request
         return new
 
-    def set_user(self, user: dict[str, Any] | None) -> None:
-        """id, email, username and ip_address as given, other keys as attributes; None clears it."""
+    def set_user(self, user: User | None) -> None:
+        """id, email, username and ip_address as given; attributes, and from
+        untyped code any other key, as attributes. None clears it."""
         if user is None:
             with self._lock:
                 self._user = {}
@@ -62,18 +65,20 @@ class Scope:
             debug(f"set_user: expected a dict or None, got {type(user).__name__}")
             return
         out: dict[str, Any] = {}
-        attributes = {}
+        attributes: dict[str, Any] = {}
         for key, value in user.items():
             if value is None:
                 continue
             if key in USER_FIELDS:
                 out[key] = truncate(str(value), MAX_TAG_VALUE)
+            elif key == "attributes" and isinstance(value, Mapping):
+                attributes.update(value)
             else:
                 attributes[str(key)] = value
         if attributes:
             out["attributes"] = json_safe(attributes)
         with self._lock:
-            self._user = out
+            self._user = cast(EventUser, out)
 
     def set_tag(self, key: str, value: Any) -> None:
         """A searchable key and value; None removes the tag."""
@@ -91,11 +96,11 @@ class Scope:
                 return
             self._tags[key] = truncate(str(value), MAX_TAG_VALUE)
 
-    def set_tags(self, tags: dict[str, Any]) -> None:
+    def set_tags(self, tags: Mapping[str, Any]) -> None:
         for key, value in tags.items():
             self.set_tag(key, value)
 
-    def set_context(self, name: str, value: dict[str, Any] | None) -> None:
+    def set_context(self, name: str, value: Mapping[str, Any] | None) -> None:
         """Structured data shown on the event, not searchable; None removes it."""
         with self._lock:
             if value is None:
@@ -107,11 +112,11 @@ class Scope:
         self,
         message: str | None = None,
         category: str | None = None,
-        level: str = "info",
-        data: dict[str, Any] | None = None,
-        type: str = "default",
+        level: Level = "info",
+        data: Mapping[str, Any] | None = None,
+        type: BreadcrumbType = "default",
     ) -> None:
-        crumb: dict[str, Any] = {
+        crumb: Breadcrumb = {
             "timestamp": utc_now(),
             "type": type if type in BREADCRUMB_TYPES else "default",
             "level": level if level in LEVELS else "info",
@@ -124,15 +129,15 @@ class Scope:
             crumb["data"] = json_safe(data)
         self._breadcrumbs.append(crumb)  # a full deque drops the oldest
 
-    def add_processor(self, processor: Callable[[dict], None]) -> None:
+    def add_processor(self, processor: Callable[[Event], None]) -> None:
         """processor(item) runs when an event is sent, after the scope's data is in."""
         self._processors.append(processor)
 
-    def apply(self, item: dict) -> None:
+    def apply(self, item: Event) -> None:
         """Copies the scope's data into an event item."""
         with self._lock:
             if self._user:
-                item["user"] = dict(self._user)
+                item["user"] = self._user.copy()
             if self._tags:
                 item["tags"] = dict(self._tags)
             if self._contexts:

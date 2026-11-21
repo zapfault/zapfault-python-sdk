@@ -18,3 +18,26 @@ classifiers = [
 
 [tool.hatch.version]
 path = "src/zapfault/_version.py"
+
+# Checks, not needed to use the package: pip install --group dev, then
+# mypy and ruff check.
+[dependency-groups]
+dev = ["mypy", "ruff", "flask", "django", "fastapi"]
+
+[tool.mypy]
+strict = true
+python_version = "3.10"  # the oldest mypy checks; 3.9 is tested by running
+files = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["django.*"]  # ships no types
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+src = ["src"]
+extend-exclude = ["*.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]

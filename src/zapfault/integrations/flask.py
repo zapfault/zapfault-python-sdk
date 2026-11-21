@@ -9,6 +9,7 @@ from typing import Any
 
 import flask
 
+from .._protocol import Event
 from . import capture, request_scope
 from ._request import from_environ
 
@@ -33,7 +34,7 @@ def _on_exception(sender: Any, exception: BaseException, **extra: Any) -> None:
     capture(exception, NAME)
 
 
-def _fill(environ: dict[str, Any], item: dict) -> None:
+def _fill(environ: dict[str, Any], item: Event) -> None:
     """The route as written, like GET /orders/<int:order_id>."""
     if "route" not in item and flask.has_request_context() and flask.request.url_rule is not None:
         item["route"] = f"{flask.request.method} {flask.request.url_rule.rule}"

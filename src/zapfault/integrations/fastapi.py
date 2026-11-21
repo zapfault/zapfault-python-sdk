@@ -6,10 +6,11 @@ is caught here."""
 from __future__ import annotations
 
 import functools
-from typing import Any
 
 from starlette.applications import Starlette
+from starlette.types import Receive, Scope, Send
 
+from .._protocol import Event
 from . import capture, request_scope
 from ._request import from_asgi
 
@@ -20,7 +21,7 @@ def setup_once() -> None:
     original = Starlette.__call__
 
     @functools.wraps(original)
-    async def __call__(self: Starlette, scope: dict, receive: Any, send: Any) -> None:
+    async def __call__(self: Starlette, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":  # websockets and lifespan pass through
             return await original(self, scope, receive, send)
         with request_scope(NAME, functools.partial(_fill, scope)):
@@ -33,7 +34,7 @@ def setup_once() -> None:
     Starlette.__call__ = __call__  # type: ignore[method-assign]
 
 
-def _fill(scope: dict, item: dict) -> None:
+def _fill(scope: Scope, item: Event) -> None:
     """The route as written, like GET /orders/{order_id}; the router puts the
     matched route in the ASGI scope."""
     path = getattr(scope.get("route"), "path", None)
